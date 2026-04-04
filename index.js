@@ -18,17 +18,17 @@ async function iniciarAddon() {
         const resposta = await fetch(URL_DA_LISTA);
         if (!resposta.ok) throw new Error("Falha ao acessar o link");
 
-        console.log("2. Separando TV, Filmes e Séries (Modo ULTRA Leve)...");
+        console.log("2. Separando TV, Filmes e Séries (Modo ULTRA Leve Corrigido)...");
         
         const bodyStream = Readable.fromWeb(resposta.body);
         const rl = readline.createInterface({ input: bodyStream, crlfDelay: Infinity });
 
-        let c = null; // c = canalAtual (nome curto para economizar)
+        let c = null; 
         let idCounter = 0;
         const regexSerie = /(.*?)\s*[-_]?\s*[Ss](\d+)[Ee](\d+)/i;
 
         for await (const linha of rl) {
-            const txt = linha.trim(); // txt = texto da linha
+            const txt = linha.trim(); 
 
             if (txt.startsWith("#EXTINF:")) {
                 const groupMatch = txt.match(/group-title="([^"]+)"/i);
@@ -37,7 +37,7 @@ async function iniciarAddon() {
                 c = {
                     nome: txt.split(",").pop().trim(),
                     grupo: groupMatch ? groupMatch[1] : "Geral",
-                    logo: logoMatch ? logoMatch[1] : null // Null economiza espaço se não tiver logo
+                    logo: logoMatch ? logoMatch[1] : null 
                 };
 
             } else if (txt.startsWith("http") && c) {
@@ -45,14 +45,14 @@ async function iniciarAddon() {
                 const matchSerie = c.nome.match(regexSerie);
 
                 if (matchSerie) {
-                    // LÓGICA DE SÉRIES OTIMIZADA
                     const nomeSerie = matchSerie[1].trim() || "Serie";
                     const temp = parseInt(matchSerie[2], 10);
                     const ep = parseInt(matchSerie[3], 10);
 
                     if (!db.series[nomeSerie]) {
                         db.series[nomeSerie] = {
-                            id: `s_${idCounter++}`,
+                            // CORREÇÃO: Voltamos com o prefixo 'iptv_' para o Stremio reconhecer!
+                            id: `iptv_s_${idCounter++}`, 
                             name: nomeSerie,
                             logo: c.logo || "https://via.placeholder.com/256x256.png?text=Serie",
                             group: c.grupo,
@@ -66,41 +66,39 @@ async function iniciarAddon() {
                         season: temp,
                         episode: ep,
                         released: new Date().toISOString(),
-                        url: txt // Guardamos a URL direto no video
+                        url: txt 
                     });
 
                 } else if (catLower.includes("filme") || catLower.includes("vod") || catLower.includes("cinema")) {
-                    // LÓGICA DE FILMES
                     db.movie.push({
-                        id: `m_${idCounter++}`,
+                        // CORREÇÃO: Prefixo 'iptv_' adicionado
+                        id: `iptv_m_${idCounter++}`,
                         name: c.nome,
                         logo: c.logo || "https://via.placeholder.com/256x256.png?text=Filme",
                         group: c.grupo,
                         url: txt
                     });
                 } else {
-                    // LÓGICA DE TV
                     db.tv.push({
-                        id: `t_${idCounter++}`,
+                        // CORREÇÃO: Prefixo 'iptv_' adicionado
+                        id: `iptv_t_${idCounter++}`,
                         name: c.nome,
                         logo: c.logo || "https://via.placeholder.com/256x256.png?text=TV",
                         group: c.grupo,
                         url: txt
                     });
                 }
-                c = null; // Limpa referência imediata
+                c = null; 
             }
         }
 
         const seriesArray = Object.values(db.series);
         console.log(`✅ Sucesso! TV: ${db.tv.length} | Filmes: ${db.movie.length} | Séries: ${seriesArray.length}`);
 
-        // Libera a memória do objeto original de séries, já que temos a Array agora
         db.series = null; 
 
         const builder = new addonBuilder(manifest);
 
-        // --- HANDLER DE CATÁLOGO ---
         builder.defineCatalogHandler((args) => {
             let lista = [];
             if (args.type === "tv") lista = db.tv;
@@ -124,7 +122,6 @@ async function iniciarAddon() {
             return Promise.resolve({ metas });
         });
 
-        // --- HANDLER DE METADADOS ---
         builder.defineMetaHandler((args) => {
             let meta = null;
             if (args.type === "tv") meta = db.tv.find(i => i.id === args.id);
@@ -153,7 +150,6 @@ async function iniciarAddon() {
             return Promise.resolve({ meta: {} });
         });
 
-        // --- HANDLER DE STREAM ---
         builder.defineStreamHandler((args) => {
             if (args.type === "series") {
                 const [idSerie] = args.id.split(":"); 
