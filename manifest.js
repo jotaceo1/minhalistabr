@@ -1,26 +1,28 @@
 const manifest = {
-    id: "org.meuiptv.addon",
-    version: "1.0.0",
-    name: "Meu IPTV",
-    description: "Addon para rodar minha lista com categorias e paginação",
+    id: "org.meuiptv.pro",
+    version: "2.0.0",
+    name: "Meu IPTV Pro",
+    description: "Addon IPTV completo com Filmes, Séries agrupadas e Busca integrada.",
     resources: ["catalog", "meta", "stream"],
-    types: ["tv"],
+    types: ["tv", "movie", "series"], // Adicionado Filmes e Séries
     catalogs: [
         {
             type: "tv",
-            id: "meus_canais",
-            name: "Canais Ao Vivo",
-            extra: [
-                {
-                    name: "genre", // Filtro de categorias
-                    isRequired: false, 
-                    options: [] 
-                },
-                {
-                    name: "skip", // Paginação para não travar a TV/iPad
-                    isRequired: false
-                }
-            ]
+            id: "cat_tv",
+            name: "TV Ao Vivo",
+            extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
+        },
+        {
+            type: "movie",
+            id: "cat_filmes",
+            name: "Filmes",
+            extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
+        },
+        {
+            type: "series",
+            id: "cat_series",
+            name: "Séries",
+            extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
         }
     ],
     idPrefixes: ["iptv_"]
