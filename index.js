@@ -1,6 +1,7 @@
 const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
-const parser = require("iptv-playlist-parser");
 const manifest = require("./manifest");
+const readline = require("readline");
+const { Readable } = require("stream");
 
 // ==========================================
 // ⚠️ COLOQUE O SEU LINK M3U AQUI ABAIXO ⚠️
@@ -11,39 +12,67 @@ let canais = [];
 
 async function iniciarAddon() {
     try {
-        console.log("1. Baixando lista M3U da internet...");
+        console.log("1. Conectando ao link M3U...");
         const resposta = await fetch(URL_DA_LISTA);
-        const conteudoM3u = await resposta.text();
-        const playlist = parser.parse(conteudoM3u);
-        
-        console.log("2. Processando canais...");
-        canais = playlist.items.map((item, index) => ({
-            id: `iptv_${index}`,
-            name: item.name,
-            logo: item.tvg.logo || "https://via.placeholder.com/256x256.png?text=TV",
-            url: item.url,
-            group: item.group.title || "Sem Categoria" // Categoria padrão
-        }));
 
-        // 3. Extraindo categorias únicas e atualizando o manifesto
+        if (!resposta.ok) {
+            throw new Error(`Falha ao acessar o link: ${resposta.status}`);
+        }
+
+        console.log("2. Lendo linha por linha (Modo Econômico de Memória)...");
+        
+        // Converte o download em um fluxo de leitura contínua (canudinho)
+        const bodyStream = Readable.fromWeb(resposta.body);
+        const rl = readline.createInterface({ input: bodyStream });
+
+        let canalAtual = null;
+        let contador = 0;
+
+        // Processa o arquivo linha por linha sem lotar a memória RAM
+        for await (const linha of rl) {
+            const texto = linha.trim();
+
+            if (texto.startsWith("#EXTINF:")) {
+                canalAtual = { id: `iptv_${contador}` };
+
+                // Puxa a logo se tiver
+                const logoMatch = texto.match(/tvg-logo="([^"]+)"/);
+                canalAtual.logo = logoMatch ? logoMatch[1] : "https://via.placeholder.com/256x256.png?text=TV";
+
+                // Puxa a categoria se tiver
+                const groupMatch = texto.match(/group-title="([^"]+)"/);
+                canalAtual.group = groupMatch ? groupMatch[1] : "Sem Categoria";
+
+                // Puxa o nome do canal (fica depois da última vírgula)
+                const partes = texto.split(",");
+                canalAtual.name = partes.length > 1 ? partes[partes.length - 1].trim() : `Canal ${contador}`;
+
+            } else if (texto.startsWith("http") && canalAtual) {
+                // Achou o link, junta com as infos e guarda!
+                canalAtual.url = texto;
+                canais.push(canalAtual);
+                canalAtual = null; // Reseta para o próximo
+                contador++;
+            }
+        }
+
+        // 3. Extraindo categorias únicas
         const categoriasUnicas = [...new Set(canais.map(c => c.group))].sort();
         manifest.catalogs[0].extra[0].options = categoriasUnicas;
-        console.log(`Sucesso: ${canais.length} canais carregados em ${categoriasUnicas.length} categorias.`);
+        console.log(`✅ Sucesso: ${canais.length} canais carregados em ${categoriasUnicas.length} categorias.`);
 
         // 4. Criando o Addon
         const builder = new addonBuilder(manifest);
 
-        // --- CATÁLOGO E PAGINAÇÃO ---
+        // --- CATÁLOGO ---
         builder.defineCatalogHandler((args) => {
             if (args.type === "tv" && args.id === "meus_canais") {
                 let canaisParaMostrar = canais;
 
-                // Aplica o filtro de Categoria
                 if (args.extra && args.extra.genre) {
                     canaisParaMostrar = canais.filter(canal => canal.group === args.extra.genre);
                 }
 
-                // Aplica a Paginação (100 itens por vez)
                 const skip = args.extra && args.extra.skip ? parseInt(args.extra.skip) : 0;
                 const limite = 100; 
                 const canaisPaginados = canaisParaMostrar.slice(skip, skip + limite);
@@ -61,7 +90,7 @@ async function iniciarAddon() {
             return Promise.resolve({ metas: [] });
         });
 
-        // --- DETALHES DO CANAL ---
+        // --- METADADOS ---
         builder.defineMetaHandler((args) => {
             if (args.type === "tv" && args.id.startsWith("iptv_")) {
                 const canal = canais.find(c => c.id === args.id);
@@ -82,37 +111,26 @@ async function iniciarAddon() {
             return Promise.resolve({ meta: {} });
         });
 
-        // --- LINK DE STREAMING ---
+        // --- STREAM ---
         builder.defineStreamHandler((args) => {
             if (args.type === "tv" && args.id.startsWith("iptv_")) {
                 const canal = canais.find(c => c.id === args.id);
                 if (canal) {
-                    return Promise.resolve({
-                        streams: [{
-                            title: canal.name,
-                            url: canal.url
-                        }]
-                    });
+                    return Promise.resolve({ streams: [{ title: canal.name, url: canal.url }] });
                 }
             }
             return Promise.resolve({ streams: [] });
         });
 
-        // 5. Inicia o servidor
-        serveHTTP(builder.getInterface(), { port: 7000 });
+        // 5. Inicia o servidor com a porta do Render
+        const PORT = process.env.PORT || 7000;
+        serveHTTP(builder.getInterface(), { port: PORT });
         
-        // MENSAGEM ATUALIZADA COM O SEU IP LOCAL
-        console.log("===============================================================");
-        console.log("✅ TUDO PRONTO!");
-        console.log("Para instalar no PC, use:      http://127.0.0.1:7000/manifest.json");
-        console.log("Para instalar na TV ou iPad:   http://10.0.0.142:7000/manifest.json");
-        console.log("===============================================================");
+        console.log(`🚀 Addon online e rodando na porta ${PORT}!`);
 
     } catch (error) {
         console.error("❌ Erro fatal ao iniciar:", error.message);
-        console.log("Verifique se o seu link M3U está correto e funcionando.");
     }
 }
 
-// Inicia o processo
 iniciarAddon();
