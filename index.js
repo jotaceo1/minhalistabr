@@ -8,14 +8,8 @@ const { Readable } = require("stream");
 const URL_DA_LISTA = "http://alphaboxapp3.click:80/get.php?username=22818975&password=17936157&type=m3u_plus&output=ts"; 
 // ==========================================
 
-// Nosso novo "Banco de Dados" separado
-const db = {
-    tv: [],
-    movie: [],
-    series: {} // Séries serão agrupadas por nome
-};
+const db = { tv: [], movie: [], series: {} };
 
-// Ferramenta para formatar strings e ajudar nas buscas
 const limparTexto = (texto) => texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 async function iniciarAddon() {
@@ -24,155 +18,135 @@ async function iniciarAddon() {
         const resposta = await fetch(URL_DA_LISTA);
         if (!resposta.ok) throw new Error("Falha ao acessar o link");
 
-        console.log("2. Separando TV, Filmes e Séries (Modo Econômico)...");
+        console.log("2. Separando TV, Filmes e Séries (Modo ULTRA Leve)...");
+        
         const bodyStream = Readable.fromWeb(resposta.body);
-        const rl = readline.createInterface({ input: bodyStream });
+        const rl = readline.createInterface({ input: bodyStream, crlfDelay: Infinity });
 
-        let canalAtual = null;
+        let c = null; // c = canalAtual (nome curto para economizar)
         let idCounter = 0;
-
-        // Expressão Regular para achar Séries (Ex: Nome da Série S01E05)
-        // Isso varia por provedor. Tenta achar S(número)E(número)
         const regexSerie = /(.*?)\s*[-_]?\s*[Ss](\d+)[Ee](\d+)/i;
 
         for await (const linha of rl) {
-            const texto = linha.trim();
+            const txt = linha.trim(); // txt = texto da linha
 
-            if (texto.startsWith("#EXTINF:")) {
-                const groupMatch = texto.match(/group-title="([^"]+)"/i);
-                const logoMatch = texto.match(/tvg-logo="([^"]+)"/i);
-                const nomeRaw = texto.split(",").pop().trim();
+            if (txt.startsWith("#EXTINF:")) {
+                const groupMatch = txt.match(/group-title="([^"]+)"/i);
+                const logoMatch = txt.match(/tvg-logo="([^"]+)"/i);
                 
-                canalAtual = {
-                    nomeOriginal: nomeRaw,
+                c = {
+                    nome: txt.split(",").pop().trim(),
                     grupo: groupMatch ? groupMatch[1] : "Geral",
-                    logo: logoMatch ? logoMatch[1] : "https://via.placeholder.com/256x256.png?text=Midia"
+                    logo: logoMatch ? logoMatch[1] : null // Null economiza espaço se não tiver logo
                 };
 
-            } else if (texto.startsWith("http") && canalAtual) {
-                canalAtual.url = texto;
-                const categoriaLower = canalAtual.grupo.toLowerCase();
-                
-                // Tenta ver se o nome bate com o padrão de Série
-                const matchSerie = canalAtual.nomeOriginal.match(regexSerie);
+            } else if (txt.startsWith("http") && c) {
+                const catLower = c.grupo.toLowerCase();
+                const matchSerie = c.nome.match(regexSerie);
 
-                // LÓGICA DE SEPARAÇÃO:
                 if (matchSerie) {
-                    // É SÉRIE!
-                    const nomeSerie = matchSerie[1].trim() || "Série Desconhecida";
-                    const temporada = parseInt(matchSerie[2], 10);
-                    const episodio = parseInt(matchSerie[3], 10);
-                    const idSerie = `iptv_series_${Buffer.from(nomeSerie).toString('base64').substring(0, 10)}`; // ID único pra série
+                    // LÓGICA DE SÉRIES OTIMIZADA
+                    const nomeSerie = matchSerie[1].trim() || "Serie";
+                    const temp = parseInt(matchSerie[2], 10);
+                    const ep = parseInt(matchSerie[3], 10);
 
-                    // Se a série ainda não existe no nosso DB, criamos
                     if (!db.series[nomeSerie]) {
                         db.series[nomeSerie] = {
-                            id: idSerie,
+                            id: `s_${idCounter++}`,
                             name: nomeSerie,
-                            logo: canalAtual.logo,
-                            group: canalAtual.grupo,
-                            videos: [] // Lista de episódios
+                            logo: c.logo || "https://via.placeholder.com/256x256.png?text=Serie",
+                            group: c.grupo,
+                            videos: []
                         };
                     }
 
-                    // Adiciona o episódio à série
                     db.series[nomeSerie].videos.push({
-                        id: `${idSerie}:${temporada}:${episodio}`,
-                        title: `T${temporada} E${episodio} - ${canalAtual.nomeOriginal}`,
-                        season: temporada,
-                        episode: episodio,
-                        released: new Date().toISOString(), // Necessário pro Stremio exibir certo
-                        streams: [{ title: "Assistir", url: canalAtual.url }]
+                        id: `${db.series[nomeSerie].id}:${temp}:${ep}`,
+                        title: `T${temp} E${ep} - ${c.nome}`,
+                        season: temp,
+                        episode: ep,
+                        released: new Date().toISOString(),
+                        url: txt // Guardamos a URL direto no video
                     });
 
-                } else if (categoriaLower.includes("filme") || categoriaLower.includes("vod") || categoriaLower.includes("cinema")) {
-                    // É FILME!
+                } else if (catLower.includes("filme") || catLower.includes("vod") || catLower.includes("cinema")) {
+                    // LÓGICA DE FILMES
                     db.movie.push({
-                        id: `iptv_movie_${idCounter++}`,
-                        name: canalAtual.nomeOriginal,
-                        logo: canalAtual.logo,
-                        group: canalAtual.grupo,
-                        url: canalAtual.url
+                        id: `m_${idCounter++}`,
+                        name: c.nome,
+                        logo: c.logo || "https://via.placeholder.com/256x256.png?text=Filme",
+                        group: c.grupo,
+                        url: txt
                     });
                 } else {
-                    // É TV!
+                    // LÓGICA DE TV
                     db.tv.push({
-                        id: `iptv_tv_${idCounter++}`,
-                        name: canalAtual.nomeOriginal,
-                        logo: canalAtual.logo,
-                        group: canalAtual.grupo,
-                        url: canalAtual.url
+                        id: `t_${idCounter++}`,
+                        name: c.nome,
+                        logo: c.logo || "https://via.placeholder.com/256x256.png?text=TV",
+                        group: c.grupo,
+                        url: txt
                     });
                 }
-                canalAtual = null;
+                c = null; // Limpa referência imediata
             }
         }
 
-        // Converte o Objeto de Séries em uma Array para facilitar o catálogo
         const seriesArray = Object.values(db.series);
-
         console.log(`✅ Sucesso! TV: ${db.tv.length} | Filmes: ${db.movie.length} | Séries: ${seriesArray.length}`);
+
+        // Libera a memória do objeto original de séries, já que temos a Array agora
+        db.series = null; 
 
         const builder = new addonBuilder(manifest);
 
-        // --- HANDLER DE CATÁLOGO (COM BUSCA) ---
+        // --- HANDLER DE CATÁLOGO ---
         builder.defineCatalogHandler((args) => {
-            let itensParaMostrar = [];
+            let lista = [];
+            if (args.type === "tv") lista = db.tv;
+            else if (args.type === "movie") lista = db.movie;
+            else if (args.type === "series") lista = seriesArray;
 
-            // Define qual banco de dados usar baseado no catálogo solicitado
-            if (args.type === "tv") itensParaMostrar = db.tv;
-            else if (args.type === "movie") itensParaMostrar = db.movie;
-            else if (args.type === "series") itensParaMostrar = seriesArray;
-
-            // FERRAMENTA DE BUSCA
             if (args.extra && args.extra.search) {
-                const termoBusca = limparTexto(args.extra.search);
-                itensParaMostrar = itensParaMostrar.filter(item => 
-                    limparTexto(item.name).includes(termoBusca)
-                );
+                const busca = limparTexto(args.extra.search);
+                lista = lista.filter(i => limparTexto(i.name).includes(busca));
             }
 
-            // Paginação
             const skip = args.extra && args.extra.skip ? parseInt(args.extra.skip) : 0;
-            const itensPaginados = itensParaMostrar.slice(skip, skip + 100);
-
-            const metas = itensPaginados.map(item => ({
+            const metas = lista.slice(skip, skip + 100).map(item => ({
                 id: item.id,
                 type: args.type,
                 name: item.name,
                 poster: item.logo,
-                posterShape: args.type === "tv" ? "square" : "poster" // Poster de cinema pra filmes/series
+                posterShape: args.type === "tv" ? "square" : "poster"
             }));
             
             return Promise.resolve({ metas });
         });
 
-        // --- HANDLER DE METADADOS (ONDE AS TEMPORADAS APARECEM) ---
+        // --- HANDLER DE METADADOS ---
         builder.defineMetaHandler((args) => {
-            let metaData = null;
-
-            if (args.type === "tv") metaData = db.tv.find(i => i.id === args.id);
-            else if (args.type === "movie") metaData = db.movie.find(i => i.id === args.id);
+            let meta = null;
+            if (args.type === "tv") meta = db.tv.find(i => i.id === args.id);
+            else if (args.type === "movie") meta = db.movie.find(i => i.id === args.id);
             else if (args.type === "series") {
-                const serieEncontrada = seriesArray.find(s => s.id === args.id);
-                if (serieEncontrada) {
-                    // O Stremio agrupa por temporadas magicamente se enviarmos a array 'videos'
-                    metaData = { ...serieEncontrada };
-                    // Organiza os episódios do menor pro maior pra não ficar bagunçado
-                    metaData.videos.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+                const serie = seriesArray.find(s => s.id === args.id);
+                if (serie) {
+                    meta = { ...serie };
+                    meta.videos.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
                 }
             }
 
-            if (metaData) {
+            if (meta) {
                 return Promise.resolve({
                     meta: {
-                        id: metaData.id,
+                        id: meta.id,
                         type: args.type,
-                        name: metaData.name,
-                        poster: metaData.logo,
+                        name: meta.name,
+                        poster: meta.logo,
                         posterShape: args.type === "tv" ? "square" : "poster",
-                        description: `Categoria: ${metaData.group}`,
-                        videos: metaData.videos || [] // Isso cria as temporadas na tela da Série!
+                        description: `Categoria: ${meta.group}`,
+                        videos: meta.videos || []
                     }
                 });
             }
@@ -182,15 +156,13 @@ async function iniciarAddon() {
         // --- HANDLER DE STREAM ---
         builder.defineStreamHandler((args) => {
             if (args.type === "series") {
-                // Acha a série e depois acha o episódio específico clicado
-                const [idSerie] = args.id.split(":"); // O Stremio pede o video no formato ID:Temp:Ep
+                const [idSerie] = args.id.split(":"); 
                 const serie = seriesArray.find(s => s.id === idSerie);
                 if (serie) {
-                    const episodio = serie.videos.find(v => v.id === args.id);
-                    if (episodio) return Promise.resolve({ streams: episodio.streams });
+                    const ep = serie.videos.find(v => v.id === args.id);
+                    if (ep) return Promise.resolve({ streams: [{ title: "Assistir", url: ep.url }] });
                 }
             } else {
-                // Para Filmes e TV
                 const lista = args.type === "tv" ? db.tv : db.movie;
                 const item = lista.find(i => i.id === args.id);
                 if (item) return Promise.resolve({ streams: [{ title: item.name, url: item.url }] });
@@ -198,10 +170,9 @@ async function iniciarAddon() {
             return Promise.resolve({ streams: [] });
         });
 
-        // 5. Inicia o servidor
         const PORT = process.env.PORT || 7000;
         serveHTTP(builder.getInterface(), { port: PORT });
-        console.log(`🚀 Addon Pro rodando na porta ${PORT}!`);
+        console.log(`🚀 Addon rodando liso na porta ${PORT}!`);
 
     } catch (error) {
         console.error("❌ Erro fatal:", error.message);
