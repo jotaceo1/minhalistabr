@@ -18,7 +18,7 @@ async function iniciarAddon() {
         const resposta = await fetch(URL_DA_LISTA);
         if (!resposta.ok) throw new Error("Falha ao acessar o link");
 
-        console.log("2. Separando TV, Filmes e Séries (Modo ULTRA Leve Corrigido)...");
+        console.log("2. Separando TV, Filmes e Séries (Com Gêneros)...");
         
         const bodyStream = Readable.fromWeb(resposta.body);
         const rl = readline.createInterface({ input: bodyStream, crlfDelay: Infinity });
@@ -51,7 +51,6 @@ async function iniciarAddon() {
 
                     if (!db.series[nomeSerie]) {
                         db.series[nomeSerie] = {
-                            // CORREÇÃO: Voltamos com o prefixo 'iptv_' para o Stremio reconhecer!
                             id: `iptv_s_${idCounter++}`, 
                             name: nomeSerie,
                             logo: c.logo || "https://via.placeholder.com/256x256.png?text=Serie",
@@ -71,7 +70,6 @@ async function iniciarAddon() {
 
                 } else if (catLower.includes("filme") || catLower.includes("vod") || catLower.includes("cinema")) {
                     db.movie.push({
-                        // CORREÇÃO: Prefixo 'iptv_' adicionado
                         id: `iptv_m_${idCounter++}`,
                         name: c.nome,
                         logo: c.logo || "https://via.placeholder.com/256x256.png?text=Filme",
@@ -80,7 +78,6 @@ async function iniciarAddon() {
                     });
                 } else {
                     db.tv.push({
-                        // CORREÇÃO: Prefixo 'iptv_' adicionado
                         id: `iptv_t_${idCounter++}`,
                         name: c.nome,
                         logo: c.logo || "https://via.placeholder.com/256x256.png?text=TV",
@@ -93,6 +90,17 @@ async function iniciarAddon() {
         }
 
         const seriesArray = Object.values(db.series);
+        
+        // --- NOVIDADE: EXTRAINDO CATEGORIAS SEPARADAS ---
+        const catTv = [...new Set(db.tv.map(i => i.group))].sort();
+        const catMovie = [...new Set(db.movie.map(i => i.group))].sort();
+        const catSeries = [...new Set(seriesArray.map(i => i.group))].sort();
+
+        // Injetando no manifesto correto (0=TV, 1=Filmes, 2=Séries)
+        manifest.catalogs[0].extra.find(e => e.name === "genre").options = catTv;
+        manifest.catalogs[1].extra.find(e => e.name === "genre").options = catMovie;
+        manifest.catalogs[2].extra.find(e => e.name === "genre").options = catSeries;
+
         console.log(`✅ Sucesso! TV: ${db.tv.length} | Filmes: ${db.movie.length} | Séries: ${seriesArray.length}`);
 
         db.series = null; 
@@ -105,9 +113,15 @@ async function iniciarAddon() {
             else if (args.type === "movie") lista = db.movie;
             else if (args.type === "series") lista = seriesArray;
 
+            // FILTRO DE BUSCA
             if (args.extra && args.extra.search) {
                 const busca = limparTexto(args.extra.search);
                 lista = lista.filter(i => limparTexto(i.name).includes(busca));
+            }
+
+            // FILTRO DE CATEGORIA (GÊNERO)
+            if (args.extra && args.extra.genre) {
+                lista = lista.filter(i => i.group === args.extra.genre);
             }
 
             const skip = args.extra && args.extra.skip ? parseInt(args.extra.skip) : 0;
@@ -143,6 +157,7 @@ async function iniciarAddon() {
                         poster: meta.logo,
                         posterShape: args.type === "tv" ? "square" : "poster",
                         description: `Categoria: ${meta.group}`,
+                        genres: [meta.group],
                         videos: meta.videos || []
                     }
                 });
@@ -168,7 +183,7 @@ async function iniciarAddon() {
 
         const PORT = process.env.PORT || 7000;
         serveHTTP(builder.getInterface(), { port: PORT });
-        console.log(`🚀 Addon rodando liso na porta ${PORT}!`);
+        console.log(`🚀 Addon com Busca e Gêneros rodando na porta ${PORT}!`);
 
     } catch (error) {
         console.error("❌ Erro fatal:", error.message);
