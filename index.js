@@ -14,12 +14,10 @@ const limparTexto = (texto) => texto.toLowerCase().normalize("NFD").replace(/[\u
 
 async function iniciarAddon() {
     try {
-        console.log("1. Conectando ao link M3U...");
+        console.log("1. Lendo a sua lista M3U...");
         const resposta = await fetch(URL_DA_LISTA);
         if (!resposta.ok) throw new Error("Falha ao acessar o link");
 
-        console.log("2. Separando TV, Filmes e Séries (Com Gêneros)...");
-        
         const bodyStream = Readable.fromWeb(resposta.body);
         const rl = readline.createInterface({ input: bodyStream, crlfDelay: Infinity });
 
@@ -91,39 +89,42 @@ async function iniciarAddon() {
 
         const seriesArray = Object.values(db.series);
         
-        // --- NOVIDADE: EXTRAINDO CATEGORIAS SEPARADAS ---
-        const catTv = [...new Set(db.tv.map(i => i.group))].sort();
-        const catMovie = [...new Set(db.movie.map(i => i.group))].sort();
-        const catSeries = [...new Set(seriesArray.map(i => i.group))].sort();
+        // --- PREENCHENDO O MENU DE GÊNEROS ---
+        // Pega as categorias únicas de cada aba e remove os espaços vazios
+        const catTv = [...new Set(db.tv.map(i => i.group))].filter(Boolean).sort();
+        const catMovie = [...new Set(db.movie.map(i => i.group))].filter(Boolean).sort();
+        const catSeries = [...new Set(seriesArray.map(i => i.group))].filter(Boolean).sort();
 
-        // Injetando no manifesto correto (0=TV, 1=Filmes, 2=Séries)
+        // Injeta as categorias dentro do Manifesto
         manifest.catalogs[0].extra.find(e => e.name === "genre").options = catTv;
         manifest.catalogs[1].extra.find(e => e.name === "genre").options = catMovie;
         manifest.catalogs[2].extra.find(e => e.name === "genre").options = catSeries;
 
-        console.log(`✅ Sucesso! TV: ${db.tv.length} | Filmes: ${db.movie.length} | Séries: ${seriesArray.length}`);
+        console.log(`✅ Tudo certo! TV: ${db.tv.length} | Filmes: ${db.movie.length} | Séries: ${seriesArray.length}`);
 
         db.series = null; 
 
         const builder = new addonBuilder(manifest);
 
+        // --- SISTEMA DE CATÁLOGO (GRADE, BUSCA E FILTROS) ---
         builder.defineCatalogHandler((args) => {
             let lista = [];
             if (args.type === "tv") lista = db.tv;
             else if (args.type === "movie") lista = db.movie;
             else if (args.type === "series") lista = seriesArray;
 
-            // FILTRO DE BUSCA
+            // Ativa a Busca
             if (args.extra && args.extra.search) {
                 const busca = limparTexto(args.extra.search);
                 lista = lista.filter(i => limparTexto(i.name).includes(busca));
             }
 
-            // FILTRO DE CATEGORIA (GÊNERO)
+            // Ativa o Filtro de Gêneros
             if (args.extra && args.extra.genre) {
                 lista = lista.filter(i => i.group === args.extra.genre);
             }
 
+            // Ativa a Paginação para não travar
             const skip = args.extra && args.extra.skip ? parseInt(args.extra.skip) : 0;
             const metas = lista.slice(skip, skip + 100).map(item => ({
                 id: item.id,
@@ -136,6 +137,7 @@ async function iniciarAddon() {
             return Promise.resolve({ metas });
         });
 
+        // --- SISTEMA DE METADADOS (ONDE AS TEMPORADAS APARECEM) ---
         builder.defineMetaHandler((args) => {
             let meta = null;
             if (args.type === "tv") meta = db.tv.find(i => i.id === args.id);
@@ -158,13 +160,14 @@ async function iniciarAddon() {
                         posterShape: args.type === "tv" ? "square" : "poster",
                         description: `Categoria: ${meta.group}`,
                         genres: [meta.group],
-                        videos: meta.videos || []
+                        videos: meta.videos || [] // Isso cria o botão de Temporadas!
                     }
                 });
             }
             return Promise.resolve({ meta: {} });
         });
 
+        // --- SISTEMA DE LINKS DE VÍDEO ---
         builder.defineStreamHandler((args) => {
             if (args.type === "series") {
                 const [idSerie] = args.id.split(":"); 
@@ -183,7 +186,7 @@ async function iniciarAddon() {
 
         const PORT = process.env.PORT || 7000;
         serveHTTP(builder.getInterface(), { port: PORT });
-        console.log(`🚀 Addon com Busca e Gêneros rodando na porta ${PORT}!`);
+        console.log(`🚀 Servidor rodando na porta ${PORT}!`);
 
     } catch (error) {
         console.error("❌ Erro fatal:", error.message);
